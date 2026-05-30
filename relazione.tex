@@ -1,0 +1,49 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+
+\title{\textbf{Colorazione di grafi con Graph Neural Networks e minimizzazione differenziabile dell'energia di Potts}}
+\author{Gruppo 6: Mauro Bellucci, Marta Pizzo, Marco Tornambè}
+\date{Corso di Metodi AI per la Fisica - ML 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Breve riassunto del progetto, del metodo implementato basato su Graph Neural Networks per l'assegnazione "soft" dei colori ai nodi, e dei principali risultati ottenuti nella stima del numero cromatico dei due grafi DIMACS assegnati.
+\end{abstract}
+
+\section{Introduzione al problema}
+% Descrivere brevemente il problema della colorazione dei grafi e la formulazione come problema di ottimizzazione.
+
+\section{Strategia Utilizzata}
+% Spiegare l'approccio scelto, la formulazione della funzione di loss differenziabile ispirata all'energia di Potts e la transizione dalla rappresentazione continua a quella discreta dei colori.
+
+\section{Architettura della rete}
+% Descrivere la GNN utilizzata (es. layer di embedding, message passing / graph convolution, funzioni di attivazione come ReLU e il layer di softmax finale).
+
+\section{Dettagli del training}
+% Elencare i parametri e le scelte di ottimizzazione: ottimizzatore scelto (es. Adam, SGD), learning rate, numero di epoche, numero di inizializzazioni casuali provate e la procedura di scansione su 'c'.
+
+\section{Risultati}
+% Inserire i risultati numerici e i grafici per i due grafi assegnati. Mostrare l'andamento della loss e del numero di conflitti in funzione delle epoche. Riportare il numero cromatico stimato per ciascun grafo.
+
+\section{Discussione}
+% Discutere criticamente i risultati ottenuti. Assicurarsi di rispondere esplicitamente alle seguenti domande:
+% - Il metodo converge sempre?
+% - Quanto dipende dall'inizializzazione casuale?
+% - Quali valori di c risultano sufficienti?
+% - Ci sono casi in cui la loss diminuisce ma rimangono conflitti?
+% - Quali sono i limiti del metodo implementato?
+% - Quali miglioramenti sarebbero possibili (es. regolarizzazione entropica, post-processing)?
+
+\end{document}
