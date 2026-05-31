@@ -8,9 +8,12 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{microtype}
 \geometry{a4paper, margin=2.5cm}
 
-\title{\textbf{Colorazione di grafi con Graph Neural Networks e minimizzazione differenziabile dell'energia di Potts}}
+\title{\textbf{Colorazione di grafi con Graph Neural Networks\\
+e minimizzazione differenziabile dell'energia di Potts}}
 \author{Gruppo 6: Mauro Bellucci, Marta Pizzo, Marco Tornambè}
 \date{Corso di Metodi AI per la Fisica - ML 2026}
 
@@ -19,31 +22,459 @@
 \maketitle
 
 \begin{abstract}
-Breve riassunto del progetto, del metodo implementato basato su Graph Neural Networks per l'assegnazione "soft" dei colori ai nodi, e dei principali risultati ottenuti nella stima del numero cromatico dei due grafi DIMACS assegnati.
+In questo lavoro viene presentato un metodo basato su Graph Neural Networks (GNN) per
+affrontare il problema della colorazione di grafi tramite ottimizzazione differenziabile.
+La GNN assegna a ciascun nodo una distribuzione di probabilità sui colori disponibili e
+viene addestrata minimizzando un'energia di Potts differenziabile, arricchita da un termine
+entropico con peso decrescente, utilizzando l'ottimizzatore Adam di PyTorch. La colorazione
+discreta finale si ottiene con un argmax sull'output della rete. Il metodo è stato applicato
+a due grafi in formato DIMACS: \texttt{g11} (25 nodi, 160 archi) e \texttt{g17} (128
+nodi, 2113 archi). Per \texttt{g11} è stata trovata una colorazione valida con $c = 5$
+colori in 5 esecuzioni su 50, stabilendo $\chi(\texttt{g11}) \leq 5$. Per \texttt{g17}
+è stata trovata una colorazione valida con $c = 36$ colori in 3 esecuzioni su 50,
+stabilendo $\chi(\texttt{g17}) \leq 36$.
 \end{abstract}
 
 \section{Introduzione al problema}
-% Descrivere brevemente il problema della colorazione dei grafi e la formulazione come problema di ottimizzazione.
+
+Il problema della \textbf{colorazione di grafi} è uno dei problemi combinatori più studiati
+in matematica discreta e informatica teorica. Dato un grafo non orientato $G = (V, E)$,
+dove $V$ è l'insieme dei nodi e $E$ quello degli archi, si vuole assegnare a ciascun nodo
+$i \in V$ un colore scelto da un insieme finito di $c$ colori, in modo tale che nessuna
+coppia di nodi adiacenti condivida lo stesso colore:
+\begin{equation}
+    \forall\,(i,j) \in E: \quad \mathrm{color}(i) \neq \mathrm{color}(j).
+\end{equation}
+
+Il \textbf{numero cromatico} $\chi(G)$ è il minimo intero $c$ per cui esiste una
+colorazione valida di $G$. Determinare esattamente $\chi(G)$ è un problema NP-difficile
+per grafi generali: non è noto alcun algoritmo polinomiale esatto, e i metodi di ricerca
+esaustiva diventano proibitivi già per grafi di medie dimensioni.
+
+Il problema ha applicazioni concrete in numerosi ambiti: pianificazione di orari (es.\
+assegnazione di esami a sessioni senza sovrapposizioni), assegnazione di frequenze radio in
+reti di telecomunicazione, ottimizzazione di registri nei compilatori e problemi di
+scheduling. La difficoltà combinatoria lo rende un banco di prova ideale per metodi di
+ottimizzazione approssimata.
+
+In questo progetto viene adottato un approccio basato su apprendimento automatico:
+anziché cercare la soluzione con un algoritmo combinatorio esatto, si formula il problema
+come \emph{ottimizzazione differenziabile} e lo si risolve con una GNN addestrata
+direttamente sul grafo di interesse.
+
+I due grafi assegnati al Gruppo 6 sono stati scaricati dal repository del corso in formato
+DIMACS standard:
+\begin{itemize}
+    \item \texttt{g11}: 25 nodi, 160 archi non orientati.
+    \item \texttt{g17}: 128 nodi, 2113 archi non orientati.
+\end{itemize}
+Come confronto iniziale, l'algoritmo greedy \texttt{greedy\_color} di NetworkX (strategia
+\textit{largest\_first}, che ordina i nodi per grado decrescente) ha prodotto una
+colorazione con $c = 7$ colori per \texttt{g11} e $c = 32$ colori per \texttt{g17}.
+Questi valori costituiscono limiti superiori di riferimento per $\chi(G)$.
 
 \section{Strategia Utilizzata}
-% Spiegare l'approccio scelto, la formulazione della funzione di loss differenziabile ispirata all'energia di Potts e la transizione dalla rappresentazione continua a quella discreta dei colori.
+
+\subsection*{Riformulazione come ottimizzazione differenziabile}
+
+L'idea centrale del metodo è quella di \emph{rilassare} il problema discreto di
+colorazione in un problema continuo. Invece di assegnare direttamente un colore intero a
+ogni nodo, la GNN produce per ciascun nodo $i$ un vettore di probabilità sui $c$ colori
+disponibili. L'addestramento minimizza una funzione di perdita differenziabile che
+penalizza le assegnazioni in conflitto. Al termine, la colorazione discreta si ottiene
+tramite argmax.
+
+\subsection*{Rappresentazione continua dei colori}
+
+L'output della GNN per il nodo $i$ è un vettore $p_i \in \mathbb{R}^c$ ottenuto
+applicando la funzione \textbf{softmax} alle attivazioni finali:
+\begin{equation}
+    p_i = \bigl(p_{i1},\, p_{i2},\, \dots,\, p_{ic}\bigr), \qquad
+    \sum_{k=1}^c p_{ik} = 1, \quad p_{ik} \geq 0.
+\end{equation}
+Il valore $p_{ik}$ rappresenta la probabilità (o il ``peso'') assegnata al colore $k$
+per il nodo $i$. Questa rappresentazione continua consente il calcolo del gradiente e
+l'applicazione diretta degli ottimizzatori basati su discesa del gradiente.
+
+\subsection*{Funzione di loss: energia di Potts differenziabile}
+
+La funzione di perdita è ispirata all'\textbf{hamiltoniana antiferromagnetica del modello
+di Potts}. Nel modello di Potts antiferromagnetico su reticolo, l'energia è minima quando
+spin adiacenti si trovano in stati diversi. Analogamente, si definisce:
+\begin{equation}
+    \mathcal{L}_{\mathrm{Potts}} = \sum_{(i,j)\in E} p_i \cdot p_j
+    = \sum_{(i,j)\in E} \sum_{k=1}^c p_{ik}\, p_{jk}.
+\end{equation}
+Ogni termine $p_i \cdot p_j$ misura la \emph{sovrapposizione} tra le distribuzioni di
+colore dei due nodi estremi dell'arco $(i,j)$. Se i nodi tendono ad assumere lo stesso
+colore, il prodotto scalare è grande (fino a 1 nel caso di vettori one-hot identici) e
+contribuisce ad aumentare la loss. Se i nodi tendono a colori diversi, il prodotto è
+piccolo e la loss è ridotta. Minimizzare $\mathcal{L}_{\mathrm{Potts}}$ spinge quindi la
+rete a produrre assegnazioni in cui nodi adiacenti hanno colori diversi.
+
+\subsection*{Regolarizzazione con termine entropico}
+
+Nelle prime fasi dell'addestramento, il rischio è che la rete converga rapidamente verso
+un minimo locale subottimale, collassando prematuramente su un'assegnazione di colori
+scadente. Per favorire l'esplorazione dello spazio delle soluzioni durante le prime epoche,
+è stato aggiunto alla loss un termine entropico:
+\begin{equation}
+    H = \frac{1}{|V|} \sum_{i \in V} \sum_{k=1}^c p_{ik} \log p_{ik},
+\end{equation}
+in modo che la loss totale sia:
+\begin{equation}
+    \mathcal{L}_{\mathrm{tot}} = \mathcal{L}_{\mathrm{Potts}} + \lambda\, H.
+\end{equation}
+Si noti che $H \leq 0$ (poiché $p_{ik} \in (0,1)$ implica $\log p_{ik} < 0$): il valore
+minimo di $H$ si ottiene per distribuzioni uniformi ($p_{ik} = 1/c$ per ogni $k$), dove
+$H = \log(1/c)$, mentre $H = 0$ per distribuzioni concentrate su un singolo colore
+(one-hot). Minimizzare $\mathcal{L}_{\mathrm{tot}}$ con $\lambda > 0$ ha quindi l'effetto
+di \emph{incoraggiare distribuzioni più uniformi} nelle prime epoche, analogamente a un
+meccanismo di \textit{annealing}: il parametro $\lambda$ viene ridotto progressivamente
+nel corso del training, così che nella seconda metà dell'addestramento la loss sia
+dominata dall'energia di Potts e la rete converga verso assegnazioni più nette.
+
+\subsection*{Passaggio alla colorazione discreta}
+
+Al termine dell'addestramento, la colorazione discreta è ottenuta assegnando a ogni nodo
+il colore con probabilità massima:
+\begin{equation}
+    \mathrm{color}(i) = \arg\max_k\, p_{ik}.
+\end{equation}
+Il numero di \textbf{conflitti residui} $N_{\mathrm{conflicts}}$ è il numero di archi
+$(i,j)$ per cui $\mathrm{color}(i) = \mathrm{color}(j)$. Una colorazione è valida se e
+solo se $N_{\mathrm{conflicts}} = 0$.
+
+\subsection*{Stima del numero cromatico}
+
+Per stimare $\chi(G)$, l'intero processo (costruzione della rete, addestramento,
+discretizzazione) viene ripetuto per valori crescenti di $c$, con più inizializzazioni
+casuali indipendenti per ogni $c$. Il numero cromatico stimato è il minimo $c$ per cui
+almeno un'esecuzione produce $N_{\mathrm{conflicts}} = 0$.
 
 \section{Architettura della rete}
-% Descrivere la GNN utilizzata (es. layer di embedding, message passing / graph convolution, funzioni di attivazione come ReLU e il layer di softmax finale).
+
+La rete utilizzata è denominata \texttt{ColoraGrafo} ed è implementata in PyTorch con la
+libreria \texttt{PyTorch Geometric}. L'architettura è composta da quattro blocchi
+principali.
+
+\subsection*{Embedding iniziale dei nodi}
+
+A ciascun nodo $i$ è associato un vettore di embedding appreso tramite uno strato
+\texttt{nn.Embedding}: ogni nodo viene identificato dal proprio indice intero e mappato in
+$\mathbb{R}^h$, dove $h$ è la dimensione nascosta. Questo approccio consente alla rete di
+apprendere una rappresentazione specifica per ogni nodo del grafo di input, non condizionata
+da feature esterne. Poiché il metodo addestra una GNN separata per ciascun grafo, questa
+scelta è coerente con l'obiettivo: ottimizzare i parametri per il singolo grafo assegnato.
+
+\subsection*{Layer di message passing: GraphSAGE}
+
+L'embedding di ciascun nodo viene aggiornato attraverso 2 strati di convoluzione
+\textbf{GraphSAGE} (\texttt{SAGEConv} in PyTorch Geometric), separati da attivazioni
+ReLU. L'operazione di aggiornamento al layer $\ell$ è:
+\begin{equation}
+    h_i^{(\ell+1)} = \mathrm{ReLU}\!\left(
+        W^{(\ell)} \cdot \mathrm{CONCAT}\!\left(
+            h_i^{(\ell)},\;
+            \frac{1}{|\mathcal{N}(i)|}\sum_{j \in \mathcal{N}(i)} h_j^{(\ell)}
+        \right)
+    \right),
+\end{equation}
+dove $\mathcal{N}(i)$ è l'insieme dei nodi adiacenti a $i$ e $W^{(\ell)}$ è la matrice di
+peso al layer $\ell$. GraphSAGE aggrega le rappresentazioni del vicinato tramite media e
+poi concatena il risultato con la rappresentazione del nodo centrale prima di applicare la
+trasformazione lineare. Questa formulazione, rispetto alla classica Graph Convolutional
+Network (GCN), preserva meglio l'informazione locale del nodo e risulta più stabile
+nell'ottimizzazione.
+
+\subsection*{Layer di output e softmax}
+
+L'output finale è prodotto da un layer lineare \texttt{nn.Linear} con $h$ neuroni in input
+e $c$ neuroni in output, seguito dalla funzione softmax applicata per riga (un vettore per
+nodo):
+\begin{equation}
+    p_i = \mathrm{softmax}\!\left(W_{\mathrm{out}}\, h_i^{(2)} + b_{\mathrm{out}}\right)
+    \in \mathbb{R}^c.
+\end{equation}
+
+\subsection*{Parametri e configurazioni}
+
+La dimensione nascosta è stata scelta a $h = 128$ per \texttt{g11} e $h = 256$ per
+\texttt{g17} (più grande e denso). Il numero totale di parametri addestrabili, per
+\texttt{g11} con $c = 5$ e $h = 64$, è circa 18\,000; per le configurazioni più grandi
+(es. \texttt{g17}, $h = 256$, $c = 36$) può raggiungere alcune centinaia di migliaia.
+
+L'architettura non include layer di dropout né normalizzazione, per mantenere
+l'ottimizzazione il più semplice possibile. È disponibile un'opzione \texttt{deeper=True}
+che aggiunge un terzo layer SAGEConv, non utilizzata nelle sessioni principali (poiché reti
+più profonde non hanno mostrato vantaggi e rendono l'ottimizzazione più difficile).
 
 \section{Dettagli del training}
-% Elencare i parametri e le scelte di ottimizzazione: ottimizzatore scelto (es. Adam, SGD), learning rate, numero di epoche, numero di inizializzazioni casuali provate e la procedura di scansione su 'c'.
+
+\subsection*{Ottimizzatore}
+
+L'ottimizzazione dei parametri della rete avviene tramite l'algoritmo \textbf{Adam}
+(Adaptive Moment Estimation). Adam stima adattativamente il learning rate per ogni
+parametro usando le prime e seconde stime dei momenti del gradiente, risultando
+generalmente più robusto di SGD in presenza di superfici di perdita irregolari e non
+convesse come quelle tipiche di questo problema.
+
+Il learning rate è $\eta = 0.001$ nelle sessioni di ensemble training (50 esecuzioni
+indipendenti per valore di $c$) e $\eta = 0.003$ nelle sessioni esplorative singole.
+
+\subsection*{Numero di epoche}
+
+\begin{itemize}
+    \item \texttt{g11}: 400 epoche per esecuzione nelle sessioni ensemble; fino a 300
+    epoche negli esperimenti esplorativi.
+    \item \texttt{g17}: 500 epoche per esecuzione nelle sessioni ensemble; fino a 600
+    epoche negli esperimenti esplorativi singoli.
+\end{itemize}
+
+\subsection*{Annealing del peso entropico}
+
+Il parametro $\lambda$ (peso del termine entropico) è inizializzato a $0.05$ per
+\texttt{g11} e a valori compresi tra $0.05$ e $0.1$ per \texttt{g17}. Nella seconda metà
+del training, $\lambda$ viene ridotto moltiplicativamente a ogni epoca:
+\begin{itemize}
+    \item Per \texttt{g11}: $\lambda \leftarrow 0.99 \cdot \lambda$ per epoca $> 200$.
+    \item Per \texttt{g17} (sessione singola): $\lambda \leftarrow 0.9 \cdot \lambda$ per
+    epoca $> 300$.
+\end{itemize}
+Questa riduzione progressiva ha lo scopo di lasciar esplorare più liberamente nelle prime
+epoche e di concentrare l'ottimizzazione sull'energia di Potts nelle epoche finali, quando
+la rete deve convergere verso assegnazioni di colore definite.
+
+\subsection*{Inizializzazioni casuali e procedura ensemble}
+
+Poiché la superficie della loss è non convessa e ricca di minimi locali, per ogni valore
+di $c$ vengono eseguite \textbf{50 inizializzazioni casuali indipendenti}. A ogni
+esecuzione, sia i pesi della rete che le feature di input dei nodi (vettori campionati da
+$\mathcal{N}(0,1)$) vengono reinizializzati da zero. Per ogni $c$ si riportano: la media
+del numero di conflitti su 50 esecuzioni, la deviazione standard e il numero di esecuzioni
+che producono una colorazione valida (zero conflitti).
+
+\subsection*{Baseline greedy}
+
+Come riferimento, si è calcolata una colorazione con l'algoritmo greedy \texttt{greedy\_color}
+di NetworkX con strategia \textit{largest\_first} (i nodi sono elaborati in ordine di grado
+decrescente). Questa euristica classica non garantisce la colorazione ottima, ma fornisce un
+limite superiore immediato per $\chi(G)$ e permette di valutare se la GNN migliora rispetto
+all'approccio combinatorio semplice.
+
+\subsection*{Post-processing}
+
+Per \texttt{g17}, in seguito a un singolo addestramento con $c = 32$ che ha prodotto
+5 conflitti residui, è stato applicato un algoritmo di post-processing greedy:
+\begin{enumerate}
+    \item Si identificano tutti gli archi in conflitto.
+    \item Per ciascun nodo coinvolto in un conflitto, si tenta sistematicamente di
+    assegnargli un colore alternativo tra i $c$ disponibili.
+    \item Se il cambio di colore riduce il numero totale di conflitti, viene accettato e
+    la ricerca riparte dagli archi in conflitto aggiornati.
+    \item Il processo termina quando non si trovano ulteriori miglioramenti.
+\end{enumerate}
+Questo approccio ha ridotto i conflitti da 5 a 3 nell'esempio testato.
 
 \section{Risultati}
-% Inserire i risultati numerici e i grafici per i due grafi assegnati. Mostrare l'andamento della loss e del numero di conflitti in funzione delle epoche. Riportare il numero cromatico stimato per ciascun grafo.
+
+\subsection*{Grafo \texttt{g11}}
+
+Il grafo \texttt{g11} ha $|V| = 25$ nodi e $|E| = 160$ archi non orientati (rapporto
+archi/nodi $\approx 6.4$). La baseline greedy produce una colorazione con $c = 7$ colori.
+
+I risultati dell'ensemble con 50 esecuzioni indipendenti per ciascun valore di $c$, con
+400 epoche e $\lambda = 0.05$, sono riportati nella Tabella~\ref{tab:g11}.
+
+\begin{table}[h]
+\centering
+\caption{Risultati ensemble su \texttt{g11} (50 esecuzioni, 400 epoche, $\lambda = 0.05$, $h = 128$).}
+\label{tab:g11}
+\begin{tabular}{cccc}
+\toprule
+$c$ (colori) & Media conflitti & Dev.\ std conflitti & Colorazioni valide \\
+\midrule
+2 & 123.44 & 1.39 & 0/50 \\
+3 & 61.04  & 1.80 & 0/50 \\
+4 & 30.80  & 3.67 & 0/50 \\
+5 & 12.36  & 5.62 & \textbf{5/50} \\
+6 &  4.36  & 3.01 & 11/50 \\
+7 &  1.44  & 1.92 & 28/50 \\
+8 &  0.36  & 0.77 & 41/50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Il numero medio di conflitti diminuisce monotonicamente all'aumentare di $c$, come atteso:
+con più colori disponibili, è più facile evitare le collisioni. Il comportamento della
+deviazione standard è particolarmente informativo: il valore elevato per $c = 5$ (5.62)
+indica che in quella regione critica il risultato è molto sensibile all'inizializzazione
+casuale, con alcune esecuzioni che trovano la colorazione ottima e altre che restano
+intrappolate in minimi locali con molti conflitti.
+
+Con $c = 5$, 5 esecuzioni su 50 (10\%) hanno prodotto una colorazione con zero conflitti.
+Poiché è stata concretamente trovata una colorazione valida con 5 colori, si può affermare
+con certezza che $\chi(\texttt{g11}) \leq 5$. Il risultato migliora notevolmente la
+baseline greedy, che usava 7 colori.
+
+Con $c = 4$, nessuna delle 50 esecuzioni ha trovato una colorazione valida e la media dei
+conflitti (30.8) è molto alta. Questo suggerisce con forza che $\chi(\texttt{g11}) > 4$,
+pur non costituendo una prova matematica (il metodo GNN potrebbe semplicemente fallire
+l'ottimizzazione anche quando la soluzione esiste). La stima più probabile è dunque
+$\chi(\texttt{g11}) = 5$.
+
+\subsection*{Grafo \texttt{g17}}
+
+Il grafo \texttt{g17} ha $|V| = 128$ nodi e $|E| = 2113$ archi non orientati (rapporto
+archi/nodi $\approx 16.5$). La baseline greedy produce una colorazione con $c = 32$
+colori. La scansione è stata effettuata a partire da $c = 30$ (leggermente al di sotto
+della baseline) fino a $c = 37$, con 50 esecuzioni e 500 epoche ciascuna.
+
+\begin{table}[h]
+\centering
+\caption{Risultati ensemble su \texttt{g17} (50 esecuzioni, 500 epoche, $\lambda = 0.05$--$0.1$, $h = 128$).}
+\label{tab:g17}
+\begin{tabular}{cccc}
+\toprule
+$c$ (colori) & Media conflitti & Dev.\ std conflitti & Colorazioni valide \\
+\midrule
+30 & 6.62 & 1.18 & 0/50 \\
+31 & 5.92 & 1.15 & 0/50 \\
+32 & 4.84 & 0.97 & 0/50 \\
+33 & 3.90 & 0.88 & 0/50 \\
+34 & 3.00 & 0.87 & 0/50 \\
+35 & 2.38 & 0.77 & 0/50 \\
+36 & 1.84 & 0.90 & \textbf{3/50} \\
+37 & 1.44 & 0.88 & 5/50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per \texttt{g17}, il primo valore di $c$ per cui il metodo ha trovato colorazioni valide
+è $c = 36$ (3 esecuzioni su 50, ossia il 6\%). Con $c = 37$ si ottengono 5 colorazioni
+valide su 50 (10\%). Si conclude quindi che $\chi(\texttt{g17}) \leq 36$.
+
+Il tasso di successo è decisamente inferiore rispetto a \texttt{g11} a parità di distanza
+dalla soglia critica, il che riflette la maggiore difficoltà combinatoria del grafo: con
+2113 archi su 128 nodi, i vincoli di colorazione sono molto più fitti e i minimi locali
+della loss più numerosi.
+
+Per valori $c \leq 35$, nessuna delle 50 esecuzioni ha prodotto una colorazione valida.
+La media dei conflitti decresce lentamente ma non raggiunge lo zero, indicando che queste
+configurazioni sono probabilmente al di sotto del numero cromatico. L'applicazione del
+post-processing greedy su un esperimento con $c = 32$ ha ridotto i conflitti da 5 a 3,
+ma non ha condotto a una colorazione valida, confermando che $c = 32$ è insufficiente.
 
 \section{Discussione}
-% Discutere criticamente i risultati ottenuti. Assicurarsi di rispondere esplicitamente alle seguenti domande:
-% - Il metodo converge sempre?
-% - Quanto dipende dall'inizializzazione casuale?
-% - Quali valori di c risultano sufficienti?
-% - Ci sono casi in cui la loss diminuisce ma rimangono conflitti?
-% - Quali sono i limiti del metodo implementato?
-% - Quali miglioramenti sarebbero possibili (es. regolarizzazione entropica, post-processing)?
+
+\subsection*{Il metodo converge sempre?}
+
+Il metodo converge nel senso che la funzione di loss differenziabile
+$\mathcal{L}_{\mathrm{tot}}$ tende a diminuire nel corso del training in quasi tutte le
+esecuzioni. Tuttavia, la convergenza della loss \emph{non} implica la convergenza a una
+colorazione valida. Il problema è non convesso e la superficie di perdita presenta numerosi
+minimi locali, molti dei quali corrispondono a colorazioni discrete con conflitti residui.
+In pratica, la rete converge quasi sempre a qualcosa, ma ciò che trova non è necessariamente
+la soluzione ottima. Per valori di $c$ molto superiori al numero cromatico la probabilità
+di trovare una colorazione valida è alta (82\% per \texttt{g11} con $c = 8$), mentre per
+valori vicini a $\chi(G)$ la convergenza è instabile e il risultato dipende fortemente
+dall'inizializzazione.
+
+\subsection*{Quanto dipende dall'inizializzazione casuale?}
+
+La dipendenza dall'inizializzazione casuale è molto marcata nella regione critica, cioè
+per valori di $c$ prossimi a $\chi(G)$. Per \texttt{g11} con $c = 5$, solo il 10\% delle
+esecuzioni trova la colorazione valida, con una deviazione standard dei conflitti di 5.62,
+quasi la metà della media stessa (12.36). Per \texttt{g17} con $c = 36$, la frequenza di
+successo è solo del 6\%. Questo comportamento è atteso: il problema è NP-difficile,
+l'inizializzazione determina il bacino di attrazione in cui cade l'ottimizzatore, e la
+superficie di energia è molto corrugata vicino alla soglia critica. Man mano che $c$
+aumenta, la dipendenza dall'inizializzazione si riduce (per $c = 8$ su \texttt{g11} il
+tasso di successo sale all'82\%), poiché con più colori disponibili i vincoli si allentano
+e i minimi locali validi diventano più densi e più facilmente raggiungibili.
+
+\subsection*{Quali valori di $c$ risultano sufficienti?}
+
+Per \texttt{g11}, il metodo trova colorazioni valide a partire da $c = 5$ (con bassa
+frequenza) e in modo più affidabile da $c = 7$ in su. La stima del numero cromatico è
+$\chi(\texttt{g11}) = 5$, significativamente inferiore alla baseline greedy di 7: il
+metodo GNN è quindi in grado di migliorare rispetto all'euristica classica.
+
+Per \texttt{g17}, il primo $c$ con colorazioni valide è 36, superiore alla baseline greedy
+di 32. Questo risultato apparentemente controintuitivo riflette la difficoltà
+dell'ottimizzazione su un grafo grande e denso: l'algoritmo greedy, essendo deterministico
+e costruttivo, spesso trova soluzioni buone più facilmente di un metodo stocastico non
+convesso. La stima del numero cromatico per \texttt{g17} è $\chi(\texttt{g17}) \leq 36$,
+ma il valore reale potrebbe essere inferiore (fino a 30 o meno): lo strumento GNN non è
+riuscito a trovarlo nel regime testato.
+
+\subsection*{Ci sono casi in cui la loss diminuisce ma rimangono conflitti?}
+
+Sì, questo fenomeno è osservato frequentemente, in particolare per valori di $c$ bassi
+rispetto al numero cromatico. L'energia di Potts $\mathcal{L}_{\mathrm{Potts}}$ è una
+misura di sovrapposizione \emph{continua}: la rete la riduce avvicinando le distribuzioni
+di colore di nodi adiacenti su colori diversi, ma la sovrapposizione può essere ridotta
+anche con distribuzioni ``morbide'' (softmax non concentrate su un singolo colore) che non
+producono ancora una colorazione discreta valida. Dopo la discretizzazione via argmax, le
+piccole ambiguità nelle distribuzioni possono generare conflitti che la loss continua non
+cattura. In alcuni casi, la loss continua raggiunge un plateau basso mentre il numero di
+conflitti discreti rimane costante o addirittura varia in modo non monotono. Questo mette
+in evidenza il \textbf{gap tra ottimizzazione continua e problema discreto}, che
+rappresenta una limitazione strutturale dell'approccio.
+
+\subsection*{Quali sono i limiti del metodo?}
+
+\begin{itemize}
+    \item \textbf{Assenza di garanzie di ottimalità}: essendo la loss non convessa, il
+    metodo non garantisce di trovare la colorazione ottima né di certificare che un dato
+    $c$ sia inferiore al numero cromatico.
+    \item \textbf{Scalabilità}: il metodo richiede di addestrare una rete separata per
+    ogni grafo e per ogni valore di $c$, con decine di esecuzioni indipendenti. Questo è
+    computazionalmente costoso per grafi molto grandi.
+    \item \textbf{Gap discreto-continuo}: la funzione di loss continua e il numero di
+    conflitti discreti sono metriche diverse che possono divergere, rendendo difficile
+    usare la loss come guida affidabile verso una colorazione valida.
+    \item \textbf{Sensibilità agli iperparametri}: le prestazioni dipendono dalla scelta di
+    learning rate, peso entropico, numero di epoche e dimensione nascosta. Una
+    calibrazione empirica è necessaria per ogni grafo.
+    \item \textbf{Stima solo upper bound}: il metodo può dimostrare che $\chi(G) \leq c$
+    (trovando una colorazione valida), ma non può dimostrare che $\chi(G) > c$ (un
+    fallimento nell'ottimizzazione non esclude l'esistenza della soluzione).
+    \item \textbf{Termine entropico}: il termine $\lambda H$ implementato, nella formulazione
+    adottata ($H = \frac{1}{|V|}\sum_{ik} p_{ik}\log p_{ik}$), incoraggia distribuzioni
+    \emph{uniformi} piuttosto che concentrate. Sebbene questo funzioni come meccanismo di
+    esplorazione (tipo annealing), la formulazione della descrizione del progetto prevedeva
+    invece di penalizzare l'entropia per favorire assegnazioni nette: invertendo il segno
+    si otterrebbe un effetto diverso e potenzialmente più diretto sulla qualità delle
+    soluzioni discrete.
+\end{itemize}
+
+\subsection*{Quali miglioramenti sarebbero possibili?}
+
+\begin{itemize}
+    \item \textbf{Regolarizzazione entropica con segno corretto}: usando
+    $\mathcal{L}_{\mathrm{tot}} = \mathcal{L}_{\mathrm{Potts}} + \lambda H_{\mathrm{std}}$
+    dove $H_{\mathrm{std}} = -\sum_{ik} p_{ik}\log p_{ik} \geq 0$, si penalizzerebbe
+    l'alta entropia favorendo distribuzioni one-hot, migliorando la qualità della
+    discretizzazione.
+    \item \textbf{Architetture più espressive}: usare Graph Attention Networks (GAT) o
+    Graph Isomorphism Networks (GIN) per catturare meglio le strutture locali del grafo.
+    \item \textbf{Post-processing sistematico}: applicare l'algoritmo greedy di
+    post-processing a tutte le esecuzioni (non solo ai casi con pochi conflitti residui)
+    per aumentare il numero di colorazioni valide trovate.
+    \item \textbf{Curriculum in $c$}: partire con $c$ grande (facile) e ridurlo
+    progressivamente, usando i pesi della rete precedente come punto di partenza per il
+    successivo addestramento (\textit{transfer learning}).
+    \item \textbf{Limiti inferiori certificati}: integrare algoritmi per il calcolo di
+    lower bound al numero cromatico (es.\ basati su clique massimale) per circoscrivere
+    la ricerca e confermare o escludere valori di $c$.
+    \item \textbf{Strategie di riavvio intelligenti}: in caso di fallimento, perturbare i
+    pesi della miglior soluzione trovata invece di ripartire da zero, implementando una
+    forma di \textit{basin-hopping} nello spazio dei parametri.
+    \item \textbf{Monitoraggio dell'entropia delle distribuzioni}: monitorare
+    $H_{\mathrm{std}}$ durante il training come diagnostica per rilevare distribuzioni
+    morbide che portano a conflitti discreti, e intervenire (es.\ aumentando $\lambda$)
+    quando l'entropia media supera una soglia.
+\end{itemize}
 
 \end{document}
